@@ -56,6 +56,7 @@ class Polymer(object):
     ten_prof = []
     F_prof = []
     boundry = []
+    error = []
 
     
     # Initalizer / Instance Attributes
@@ -125,6 +126,7 @@ class Polymer(object):
         self.ten_prof = np.zeros((self.N,numT))
         f_test = np.zeros(self.N)
         self.F_prof = np.zeros((self.N,numT))
+        self.error = np.zeros((self.N,numT))
         F_test = np.zeros(self.N)
         error = np.zeros(self.N)
         P = np.zeros(self.N)
@@ -266,10 +268,13 @@ class Polymer(object):
                 if ((np.sum(abs(error)))) < .001:
                     self.ten_prof[:,j] = f_test
                     self.F_prof[:,j] = F_test
+                    self.error[:,j] = error
                     print('success')
                     print('Num Trials:',trial)
                     np.savetxt('ten_vals.txt',self.ten_prof)
                     np.savetxt('f_vals.txt',self.F_prof)
+                    np.savetxt('error.txt',self.error)
+
                     break #Move on to next time step
     
         
