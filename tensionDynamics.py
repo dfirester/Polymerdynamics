@@ -9,7 +9,10 @@ def jp1(x,t,F_t,f0):
     return 2*x**2*(np.exp(-2*x**2*(x**2 *t + F_t))) / (x**2 + f0)
 
 def jp2(x,t,ti,tim1,F_t,F_ti,F_tim1):
-    return -(2*x**2/(x**2 + (F_ti - F_tim1)/(ti - tim1))) * (np.exp(-2*x**2*(x**2*(t-ti) + F_t - F_ti)) - np.exp(-2*x**2*(x**2*(t-tim1) + F_t - F_tim1)))
+    return (2*x**2/(x**2 + (F_ti - F_tim1)/(ti - tim1))) * (np.exp(-2*x**2*(x**2*(t-ti) + F_t - F_ti)) - np.exp(-2*x**2*(x**2*(t-tim1) + F_t - F_tim1)))
+
+def jp2_1(x,t,ti,tim1,F_t,F_ti,F_tim1):
+    return (1/(x**2 + (F_ti - F_tim1)/(ti - tim1))**2)*(1/(ti - tim1))*(1 - np.exp(-2*x**2*(x**2*(ti-tim1) + F_ti - F_tim1))) + ((2*x**2)/(x**2 + (F_ti - F_tim1)/(ti - tim1)))*np.exp(-2*x**2*(x**2*(ti-tim1) + F_ti - F_tim1))
 
 def p1(x,t,F_t,f0):
     return (1-np.exp(-2*x**2*(x**2 * t + F_t)))/(x**2 + f0)
@@ -17,6 +20,29 @@ def p1(x,t,F_t,f0):
 def p2(x,t,ti,tim1,F_t,F_ti,F_tim1):
     return -(1/(x**2 + (F_ti - F_tim1)/(ti - tim1))) * (np.exp(-2*x**2*(x**2*(t-ti) + F_t - F_ti)) - np.exp(-2*x**2*(x**2*(t-tim1) + F_t - F_tim1)))
 
+
+def integral(args):
+    k = args[0]
+    j = args[1]
+    dt = args[2]
+    F_test = args[3]
+    F_target_k_1 = args[4]
+    F_target_k = args[5]
+    I = integrate.quad(p2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test,F_target_k_1,F_target_k))
+    return I[0]
+
+def integralJ(args):
+    k = args[0]
+    j = args[1]
+    dt = args[2]
+    F_test = args[3]
+    F_target_k_1 = args[4]
+    F_target_k = args[5]
+    if k + 1 == j:
+        I = integrate.quad(jp2_1,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test,F_target_k_1,F_target_k))
+    else:
+        I = integrate.quad(jp2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test,F_target_k_1,F_target_k))
+    return I[0]
 
 
 class Polymer(object):
@@ -65,19 +91,24 @@ class Polymer(object):
     @property
     def J1m(self):
         matrix = np.zeros((self.N,self.N))
-        for i in range(1,self.N - 1):
+        for i in range(0,self.N):
             matrix[i,i] = -2
-            matrix[i,i-1] = 1
-            matrix[i,i+1] = 1
-
-        matrix[0,0] = -2
-        matrix[0,1] = 1
-
-        matrix[self.N-1,self.N-1] = -2
-        matrix[self.N-1,self.N-2] = 1
+            if i-1 > -1:
+                matrix[i,i-1] = 1
+            if i+1 < self.N:
+                matrix[i,i+1] = 1
+           # matrix[i,i] = -30
+            #if i-1 > -1:
+             #   matrix[i,i-1] = 16
+           # if i+1 < 100:
+            #    matrix[i,i+1] = 16
+            #if i-2 > -1:
+            #    matrix[i,i-2] = -1
+            #if i+2 < 100:
+            #    matrix[i,i+2] = -1
         return matrix
 
-
+  
 
     
 
@@ -87,7 +118,7 @@ class Polymer(object):
     # Feed in the boundry conditions
     
     
-    def Simulation(self,T):
+    def Simulation(self,T,numthreads):
         numT = int(np.floor(T/self.lcl_dt))
         dt = self.lcl_dt
         J2m = np.zeros((self.N,self.N))
@@ -107,7 +138,7 @@ class Polymer(object):
         # INITATE THE TEST VALUE TO START
         f_test = np.linspace(self.boundry[1],self.boundry[1],self.N)
 
-
+        p = Pool(numthreads)
 
         starttimes = np.zeros(numT)
         starttimes[0] = time.time()
@@ -138,20 +169,32 @@ class Polymer(object):
             
                     E = integrate.quad(jp1,0,np.inf,args=(j*dt,F_test[i],self.f0))
                     P1J[i] = E[0]
+
+                    parameters = []
+                    for z in range(0,j):
+                        k = j - z - 1
+                        parameters.extend([[k,j,dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]]])
+                    results_pooled = list(p.map(integral,parameters))
+                    results = list(results_pooled)
+                    P2[i] = sum(results)
+            
+                    results_pooled_J = list(p.map(integralJ,parameters))
+                    results_J = list(results_pooled_J)
+                    P2J[i] = sum(results_J)
             
                     #Calculate part 2 of the RHS of the equation for each value of tp. This creates a vector of
                     #values that must be summed.
-                    vector = np.zeros(j) #This vector holds the approximate values of the integral for each tp
-                    partialsum = np.zeros(j+1) #This vector will hold the partial sums as we converge on the integral
+                    #vector = np.zeros(j) #This vector holds the approximate values of the integral for each tp
+                    #partialsum = np.zeros(j+1) #This vector will hold the partial sums as we converge on the integral
                                      #When this is not changing much, we will truncate the integral in order to
                                      #Save computation time
                     
 
-                    for z in range(0,j):
-                        k = j - z - 1
-                        I = integrate.quad(p2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
-                        vector[k] = I[0]
-                        partialsum[z+1] = sum(vector)
+                    #for z in range(0,j):
+                     #   k = j - z - 1
+                     #   I = integrate.quad(p2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
+                     #   vector[k] = I[0]
+                     #   partialsum[z+1] = sum(vector)
                 
            
                 
@@ -163,23 +206,26 @@ class Polymer(object):
                     #    break
                
                 
-                    P2[i] = sum(vector)
+                   # P2[i] = sum(vector)
                 
                 ## THIS IS FOR COMPUTING THE JACOBIAN    
-                    vectorJ = np.zeros(j) #This vector holds the approximate values of the integral for each tp
-                    partialsumJ = np.zeros(j+1) #This vector will hold the partial sums as we converge on the integral
+                  #  vectorJ = np.zeros(j) #This vector holds the approximate values of the integral for each tp
+                  #  partialsumJ = np.zeros(j+1) #This vector will hold the partial sums as we converge on the integral
                                          #When this is not changing much, we will truncate the integral in order to
                                          #Save computation time
             
-                    for z in range(0,1):
-                        k = j - z - 1
-                        I = integrate.quad(jp2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
-                        vectorJ[k] = I[0]
-                        partialsumJ[z+1] = sum(vectorJ)
+                 #   for z in range(0,j):
+                 #       k = j - z - 1
+                  #      if z == 0:
+                   #         I = integrate.quad(jp2_1,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
+                   #     else:
+                  #          I = integrate.quad(jp2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
+                  #      vectorJ[k] = I[0]
+                    #    partialsumJ[z+1] = sum(vectorJ)
                 
                 
     
-                    P2J[i] = vectorJ[j-1]
+                   # P2J[i] = vectorJ[j-1]
             
 
                 # Sum the two contributions
@@ -188,7 +234,7 @@ class Polymer(object):
                 
 
                 for i in range(0,self.N-1):
-                    J2m[i,i] = P1J[i] + P2J[i]
+                    J2m[i,i] = (P1J[i] + P2J[i])*(1/self.lp)
             
                 Jacobian = self.J1m - J2m
         
@@ -201,8 +247,9 @@ class Polymer(object):
                 for i in range(0,self.N):
                     if np.abs(curvature[i]) > 1e3:
                         curvature[i] = curvature[i-1]
-        
-                error = curvature - P
+
+                curvature = curvature
+                error = curvature - (1/self.lp)*P
         
                 error[0] = 0
                 error[self.N-1] = 0
@@ -216,17 +263,19 @@ class Polymer(object):
        # C = 1 - S[0]
        # B = (1 - C - S[999])/999
    
-                if ((np.sum(abs(error)))) < .01:
+                if ((np.sum(abs(error)))) < .001:
                     self.ten_prof[:,j] = f_test
                     self.F_prof[:,j] = F_test
                     print('success')
                     print('Num Trials:',trial)
+                    np.savetxt('ten_vals.txt',self.ten_prof)
+                    np.savetxt('f_vals.txt',self.F_prof)
                     break #Move on to next time step
     
         
         
                 tosubtract = (np.dot(np.linalg.pinv(Jacobian),error))
-                F_test = F_test - 5*tosubtract
+                F_test = F_test - tosubtract
         
                 #f_test = f_test - tosubtract
                 f_test = (2/dt)*(F_test - self.F_prof[:,j-1]) - self.ten_prof[:,j-1]
@@ -234,5 +283,7 @@ class Polymer(object):
         
                 f_test[0] = self.boundry[j]
                 f_test[self.N-1] = self.boundry[j]
-            
+
+                
+        p.terminate()
  
