@@ -22,26 +22,26 @@ def p2(x,t,ti,tim1,F_t,F_ti,F_tim1):
 
 
 def integral(args):
-    k = args[0]
-    j = args[1]
-    dt = args[2]
+    tn = args[0]
+    ti = args[1]
+    tim1 = args[2]
     F_test = args[3]
     F_target_k_1 = args[4]
     F_target_k = args[5]
-    I = integrate.quad(p2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test,F_target_k_1,F_target_k))
+    I = integrate.quad(p2,0,np.inf,args=(tn,ti,tim1,F_test,F_target_k_1,F_target_k))
     return I[0]
 
 def integralJ(args):
-    k = args[0]
-    j = args[1]
-    dt = args[2]
+    tn = args[0]
+    ti = args[1]
+    tim1 = args[2]
     F_test = args[3]
     F_target_k_1 = args[4]
     F_target_k = args[5]
-    if k + 1 == j:
-        I = integrate.quad(jp2_1,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test,F_target_k_1,F_target_k))
+    if tn == ti:
+        I = integrate.quad(jp2_1,0,np.inf,args=(tn,ti,tim1,F_test,F_target_k_1,F_target_k))
     else:
-        I = integrate.quad(jp2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test,F_target_k_1,F_target_k))
+        I = integrate.quad(jp2,0,np.inf,args=(tn,ti,tim1,F_test,F_target_k_1,F_target_k))
     return I[0]
 
 
@@ -57,6 +57,7 @@ class Polymer(object):
     F_prof = []
     boundry = []
     error = []
+    sld = []
 
     
     # Initalizer / Instance Attributes
@@ -124,6 +125,7 @@ class Polymer(object):
         dt = self.lcl_dt
         J2m = np.zeros((self.N,self.N))
         self.ten_prof = np.zeros((self.N,numT))
+        self.sld = np.zeros((self.N,numT))
         f_test = np.zeros(self.N)
         self.F_prof = np.zeros((self.N,numT))
         self.error = np.zeros((self.N,numT))
@@ -137,6 +139,7 @@ class Polymer(object):
         tosubtract = np.zeros(self.N)
         self.ten_prof[:,0] = self.f0
         self.F_prof[:,0] = 0
+        clock = np.linspace(0,T,numT+1)
         # INITATE THE TEST VALUE TO START
         f_test = np.linspace(self.boundry[1],self.boundry[1],self.N)
 
@@ -172,64 +175,47 @@ class Polymer(object):
                     E = integrate.quad(jp1,0,np.inf,args=(j*dt,F_test[i],self.f0))
                     P1J[i] = E[0]
 
+
+                    #Calculate part 2 of the RHS of equation: need to compute sum of integrals
+                    
+
+                    #To calculate which integrals to preform, we will always take the first 50 points and the
+                    #0 point. After that, we want to compute the curvature at each point, and if it is above
+                    #A certain threshold, we will break the integrals into small pieces around that
+                    #point. The curvature cutoff should be based on some sort of exponential, so that
+                    #the further in the past we are, the less we care (except for extreme steps), but
+                    #for now we will just take an absolute cutoff (of 0.01)
                     parameters = []
-                    for z in range(0,j):
-                        k = j - z - 1
-                        parameters.extend([[k,j,dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]]])
+                    indexlist = [0]
+                    minval = max(0,j-10) 
+                    for k in range(minval,j+1): #Always add the last 50 points to the list
+                        indexlist.extend([k])
+                
+                    if j > 10: #AFter the 10th point, begin computing curvature
+                        dydx = np.gradient(self.F_prof[i,:j])
+                        curvature = np.gradient(dydx) #Compute curvature
+                        for k in range(0,len(curvature)): #For each index (j)
+                            if abs(curvature[k]) > .01: #If the curvature is above a certain amount
+                                que = [max(0,k-2),max(0,k-1),k,min(j,k+1),min(j,k+2)] #Grab all adjacent points
+                                for m in que: 
+                                    if m not in indexlist: #If the points are not currently in the list
+                                        indexlist.extend([m]) #Add them!
+
+                    indexlist = np.unique(indexlist) #np.unique will cut out any duplicates, and arrange the list
+                    for k in range(1,len(indexlist)): #Extend the list of paramaters to compute integrals for
+                        parameters.extend([[clock[j],clock[int(indexlist[k])],clock[int(indexlist[k-1])],F_test[i],self.F_prof[i,int(indexlist[k])],self.F_prof[i,int(indexlist[k-1])]]])
+
+                    #Compute sum of P2 integrals
                     results_pooled = list(p.map(integral,parameters))
                     results = list(results_pooled)
                     P2[i] = sum(results)
-            
+
+                    #Compute sum of jacobian P2 integrals
                     results_pooled_J = list(p.map(integralJ,parameters))
                     results_J = list(results_pooled_J)
                     P2J[i] = sum(results_J)
             
-                    #Calculate part 2 of the RHS of the equation for each value of tp. This creates a vector of
-                    #values that must be summed.
-                    #vector = np.zeros(j) #This vector holds the approximate values of the integral for each tp
-                    #partialsum = np.zeros(j+1) #This vector will hold the partial sums as we converge on the integral
-                                     #When this is not changing much, we will truncate the integral in order to
-                                     #Save computation time
-                    
-
-                    #for z in range(0,j):
-                     #   k = j - z - 1
-                     #   I = integrate.quad(p2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
-                     #   vector[k] = I[0]
-                     #   partialsum[z+1] = sum(vector)
-                
-           
-                
-                     # if (abs(partialsum[z+1] - partialsum[z])) < .1:
-                     #    count = count + 1
-                    
-                   # if count == 3:
-                   #     print('break')
-                    #    break
-               
-                
-                   # P2[i] = sum(vector)
-                
-                ## THIS IS FOR COMPUTING THE JACOBIAN    
-                  #  vectorJ = np.zeros(j) #This vector holds the approximate values of the integral for each tp
-                  #  partialsumJ = np.zeros(j+1) #This vector will hold the partial sums as we converge on the integral
-                                         #When this is not changing much, we will truncate the integral in order to
-                                         #Save computation time
-            
-                 #   for z in range(0,j):
-                 #       k = j - z - 1
-                  #      if z == 0:
-                   #         I = integrate.quad(jp2_1,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
-                   #     else:
-                  #          I = integrate.quad(jp2,0,np.inf,args=(j*dt,(k+1)*dt,k*dt,F_test[i],self.F_prof[i,k+1],self.F_prof[i,k]))
-                  #      vectorJ[k] = I[0]
-                    #    partialsumJ[z+1] = sum(vectorJ)
-                
-                
-    
-                   # P2J[i] = vectorJ[j-1]
-            
-
+              
                 # Sum the two contributions
                 P = P1 + P2
         
@@ -255,25 +241,19 @@ class Polymer(object):
         
                 error[0] = 0
                 error[self.N-1] = 0
-              
-        
 
-        #for i in range(0,1000):
-         #   intval[i] = integrate.trapz(curvature[0:i])
-         #   S[i] = integrate.trapz(intval[0:i])
-
-       # C = 1 - S[0]
-       # B = (1 - C - S[999])/999
    
                 if ((np.sum(abs(error)))) < .001:
                     self.ten_prof[:,j] = f_test
                     self.F_prof[:,j] = F_test
                     self.error[:,j] = error
+                    self.sld[:,j] = P
                     print('success')
                     print('Num Trials:',trial)
                     np.savetxt('ten_vals.txt',self.ten_prof)
                     np.savetxt('f_vals.txt',self.F_prof)
                     np.savetxt('error.txt',self.error)
+                    np.savetxt('sld.txt',self.sld)
 
                     break #Move on to next time step
     
@@ -282,7 +262,7 @@ class Polymer(object):
                 tosubtract = (np.dot(np.linalg.pinv(Jacobian),error))
                 F_test = F_test - tosubtract
         
-                #f_test = f_test - tosubtract
+             
                 f_test = (2/dt)*(F_test - self.F_prof[:,j-1]) - self.ten_prof[:,j-1]
         
         
