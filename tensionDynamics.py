@@ -1,4 +1,5 @@
 import numpy as np
+import sys
 import time
 import scipy.integrate as integrate
 import scipy.special as special
@@ -53,42 +54,86 @@ class Polymer(object):
     lcl_dx = None
     N = None
     f0 = None
+    real_dt = None
+    numT = None
     ten_prof = []
     F_prof = []
     boundry = []
     error = []
     sld = []
+    
 
     
     # Initalizer / Instance Attributes
-    def __init__(self,lp,lc):
+    def __init__(self,lp,lc,transdrag):
         '''Construct a Polymer object.
             Args:
                 lp: The persistance length of the chain
                 lc: The contour length of the chain '''
         self.lp = lp
         self.lc = lc
+        self.tdrag = transdrag
+        self.ldrag = transdrag/2
     
     # Allow user to set the time step of the simulation
     def setdt(self,dt):
+        ''' Set the time step to use in the simulation. This is the scaled time step, which ranges from
+        .01 to 10-100, depending on the pulling force and speed. Also calculate the real time step in real time
+        Args:
+                dt: The rescaled timestep
+                '''
         self.lcl_dt = dt
+        self.real_dt = dt*self.tdrag/self.k
+
+    @property
+    def k(self):
+        ''' Return the value of the bending modulus, based on the persistance length'''
+        return self.lp*4.114
 
     # Allow user to set the number of points to break the simulation into along the arclength coordinate
     def setNx(self,N):
-        self.lcl_dx = self.lc/N
+        ''' Set the number of points to break the simulation into along the arclength, as well as 
+        calculate the size of the spacial step in real length
+        Args:
+                N: The number of points to simulate along the length of the chain
+                '''
+        self.lcl_dx = self.lc/(N-1)
         self.N = N
 
 
-    def boundry(self,sympull):
-        self.boundry = sympull[:]
+    def fastpullProtocol(self,force):
+        '''Set the boundry conditions to a jump in force'''
+        self.boundry = np.linspace(force/self.k,force/self.k,self.numT + 1)
+        
 
     
-    def setValues(self,dt,N,f0,sympull):
-        self.lcl_dx = self.lc/N
+    def sinProtocol(self,freq,mid,amp):
+        '''Set the boundry conditions to a sinusoidal stimulus, with real frequency, force amplitude, and force offset
+        Args:
+                freq: The real frequency of stimulation
+                mid: The offset of the amplitude
+                amp: Amplitude of sinusoidal stimulus'''
+        t = np.linspace(0,self.numT*self.real_dt,self.numT+1)
+        if self.numT*self.real_dt*freq < 10:
+           raise RuntimeWarning('Less than ten cycles present, consider changing time step or number of time points to accommodate')
+        self.boundry = (mid + amp*np.sin(t*2*np.pi*freq))/self.k
+        
+
+    def setValues(self,dt,N,f0,numT):
+        '''Set the values for the simulation, including the time step, the number of points along the arclength,
+        the initial holding force/prestress, and the number of simulation points
+        Args:
+                dt: The rescaled timestep
+                N: The number of points to simulate along the length of the chain
+                f0: The prestress/holding force of the chain before the simulation begins
+                numT: The number of timepoints to take in the simulation'''
+        self.lcl_dx = self.lc/(N-1)
         self.N = N
         self.lcl_dt = dt
-        self.f0 = f0
-        self.boundry = sympull[:]
+        self.real_dt = dt*self.tdrag/self.k
+        self.f0 = f0/self.k
+        self.numT = int(numT)
+  
 
     @property
     def J1m(self):
@@ -108,7 +153,7 @@ class Polymer(object):
             #    matrix[i,i-2] = -1
             #if i+2 < 100:
             #    matrix[i,i+2] = -1
-        return matrix
+        return matrix/self.lcl_dx**2
 
   
 
@@ -120,9 +165,10 @@ class Polymer(object):
     # Feed in the boundry conditions
     
     
-    def Simulation(self,T,numthreads):
-        numT = int(np.floor(T/self.lcl_dt))
+    def Simulation(self,numthreads):
+        numT = int(self.numT)
         dt = self.lcl_dt
+        T = dt*numT
         J2m = np.zeros((self.N,self.N))
         self.ten_prof = np.zeros((self.N,numT))
         self.sld = np.zeros((self.N,numT))
@@ -222,25 +268,25 @@ class Polymer(object):
                 
 
                 for i in range(0,self.N-1):
-                    J2m[i,i] = (P1J[i] + P2J[i])*(1/self.lp)
+                    J2m[i,i] = (P1J[i] + P2J[i])
             
-                Jacobian = self.J1m - J2m
+                Jacobian = self.J1m - (1/(2*self.lp*np.pi))*J2m
         
    
     
         
                 #TAKE 2ND DERIVATIVE OF THE TEST FUNCTION, TO COMPUTE CURVATURE
                 dxdy = np.gradient(F_test)
-                curvature = np.gradient(dxdy)
+                curvature = (1/self.lcl_dx**2)*np.gradient(dxdy)
                 for i in range(0,self.N):
-                    if np.abs(curvature[i]) > 1e3:
+                    if np.abs(curvature[i]) > 1e5:
                         curvature[i] = curvature[i-1]
 
                 curvature = curvature
-                error = curvature - (1/self.lp)*P
+                error = curvature - (1/(2*self.lp*np.pi))*P
         
                 error[0] = 0
-                error[self.N-1] = 0
+                error[self.N - 1] = 0
 
    
                 if ((np.sum(abs(error)))) < .001:
@@ -250,10 +296,11 @@ class Polymer(object):
                     self.sld[:,j] = P
                     print('success')
                     print('Num Trials:',trial)
-                    np.savetxt('ten_vals.txt',self.ten_prof)
+                    np.savetxt('ten_vals.txt',self.ten_prof*self.k)
                     np.savetxt('f_vals.txt',self.F_prof)
                     np.savetxt('error.txt',self.error)
                     np.savetxt('sld.txt',self.sld)
+                    np.savetxt('times.txt',clock*self.tdrag/self.k)
 
                     break #Move on to next time step
     
