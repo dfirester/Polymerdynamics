@@ -2,8 +2,15 @@ import tensionDynamics
 from tensionDynamics import Polymer
 import numpy as np 
 
-chain = Polymer(10,150,1e-7)
-chain.setValues(10,101,1,50000)
-chain.sinProtocol(1e5,5,5)
-chain.Simulation(60)
+chain = Polymer(150,1e-7)
+
+lpvals = np.linspace(10,10,50)
+lpvals = np.append(lpvals, np.linspace(20,20,50))
+chain.setlp(lpvals)
+
+chain.setValues(1e-10,100,1,10)
+
+chain.fastpullProtocol(10)
+
+chain.Simulation(1)
 
